@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BuatQris QRIS Tester</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#07111f;color:#eef5fb;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{max-width:720px;margin:auto;padding:22px 15px 48px}.head{display:flex;justify-content:space-between;align-items:center}
+h1{font-size:25px;margin:0}.sub,.muted{color:#8ea3b9;font-size:13px}.badge{background:#0b8f62;padding:6px 10px;border-radius:999px;font-size:12px}
+.card{margin-top:14px;padding:17px;background:#0d1a2b;border:1px solid #1e334b;border-radius:18px}
+h2{font-size:17px;margin:0 0 13px}.grid{display:grid;gap:12px}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+label{font-size:13px;color:#b3c2d2}input{width:100%;margin-top:6px;padding:12px;border:1px solid #29425f;border-radius:11px;background:#081421;color:#fff;outline:none}
+button{width:100%;padding:13px;border:0;border-radius:12px;background:#0ca66d;color:#fff;font-weight:750;margin-top:10px}
+button.alt{background:#1a2d43}button:disabled{opacity:.55}
+.status{margin-top:10px;padding:11px;border-radius:11px;background:#10243a;font-size:13px}
+.qr{text-align:center}.qr img{display:block;max-width:300px;width:100%;margin:12px auto;background:#fff;padding:10px;border-radius:12px}
+pre{background:#07101b;padding:12px;border-radius:11px;white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:360px;overflow:auto}
+.hidden{display:none}.copy{font-size:12px;color:#8ea3b9}.ok{font-size:14px}.danger{color:#ff9c9c}
+@media(max-width:550px){.row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head"><div><h1>BuatQris QRIS Tester</h1><div class="sub">API test • qris_create • qris_check_status</div></div><span class="badge">TEST</span></div>
+
+  <div class="card">
+    <h2>API Credentials</h2>
+    <div class="grid">
+      <label>Account ID<input id="account" placeholder="user_..."></label>
+      <label>Secret Token<input id="token" type="password" placeholder="Secret Token"></label>
+      <label>Signing Secret <span class="muted">(opsional untuk test webhook)</span>
+        <input id="signing" type="password" placeholder="whsec_...">
+      </label>
+    </div>
+    <div class="status">Provider: <b>https://api.buatqris.site</b><br>Credentials hanya dikirim ke backend tester saat tombol ditekan.</div>
+  </div>
+
+  <div class="card">
+    <h2>1. Buat Transaksi QRIS</h2>
+    <div class="row">
+      <label>Nominal<input id="amount" type="number" min="1" value="10000"></label>
+      <label>QRIS Method<input id="method" value="qris_two"></label>
+    </div>
+    <label style="display:block;margin-top:12px">Description
+      <input id="description" value="Test pembayaran QRIS">
+    </label>
+    <button id="create">Buat QRIS</button>
+    <div id="createStatus" class="status">Belum ada transaksi.</div>
+  </div>
+
+  <div class="card qr hidden" id="qrCard">
+    <h2>QRIS</h2>
+    <img id="qrImg" alt="QRIS">
+    <div id="txInfo" class="ok"></div>
+    <button class="alt" id="check">Cek Status Sekarang</button>
+    <button class="alt" id="poll">Auto Cek Status (stop 2 menit)</button>
+  </div>
+
+  <div class="card hidden" id="responseCard">
+    <h2>Response API</h2>
+    <pre id="response"></pre>
+  </div>
+
+  <div class="card">
+    <h2>2. Callback / Webhook</h2>
+    <div class="muted">URL ini yang dimasukkan ke menu Webhook / Callback BuatQris setelah domain tester sudah dideploy.</div>
+    <input id="webhook" readonly style="margin-top:10px">
+    <button class="alt" id="copyWebhook">Salin Callback URL</button>
+    <div id="webhookStatus" class="status">Belum ada webhook masuk.</div>
+  </div>
+
+  <div class="card">
+    <h2>3. Test Webhook Manual</h2>
+    <div class="muted">Buat payload contoh dari dokumentasi BuatQris lalu kirim ke endpoint callback tester.</div>
+    <button class="alt" id="simulate">Kirim Simulasi payment.success</button>
+    <pre id="simResponse" class="hidden"></pre>
+  </div>
+
+  <div class="card">
+    <div class="muted"><b>Penting:</b> jangan masukkan kredensial produksi ke frontend production. Untuk website asli, simpan Account ID/Secret Token/Signing Secret di Environment Variables backend.</div>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+let transactionId="";
+let pollTimer=null;
+
+$("webhook").value=location.origin+"/api/payment/webhook";
+
+$("create").onclick=async()=>{
+  const p={
+    accountId:$("account").value.trim(),
+    secretToken:$("token").value,
+    amount:Number($("amount").value),
+    description:$("description").value.trim(),
+    qrisMethod:$("method").value.trim()||"qris_two"
+  };
+  if(!p.accountId||!p.secretToken||!p.amount){
+    $("createStatus").textContent="Account ID, Secret Token, dan nominal wajib diisi."; return;
+  }
+  $("create").disabled=true;$("createStatus").textContent="Membuat transaksi QRIS...";
+  try{
+    const r=await fetch("/api/create-qris",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});
+    const d=await r.json();
+    $("responseCard").classList.remove("hidden");$("response").textContent=JSON.stringify(d,null,2);
+    const x=d.response||d;
+    const data=x.data||x;
+    const qr=data.qr_image||x.qr_image||data.qr_url||x.qr_url||data.qr_code||x.qr_code;
+    transactionId=data.transaction_id||x.transaction_id||"";
+    if(qr){
+      $("qrCard").classList.remove("hidden");
+      if(/^data:image\//.test(qr)||/^https?:\/\//.test(qr)) $("qrImg").src=qr;
+      else $("qrImg").src="data:image/png;base64,"+qr;
+    }
+    $("txInfo").textContent=transactionId?("Transaction ID: "+transactionId):"Transaction ID tidak ditemukan di response.";
+    $("createStatus").textContent=r.ok?"QRIS berhasil dibuat.":"Gagal membuat QRIS.";
+  }catch(e){$("createStatus").textContent="Error: "+e.message}
+  $("create").disabled=false;
+};
+
+async function checkStatus(){
+  if(!transactionId){$("createStatus").textContent="Transaction ID belum tersedia.";return}
+  $("createStatus").textContent="Mengecek status pembayaran...";
+  try{
+    const r=await fetch("/api/check-status",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({accountId:$("account").value.trim(),secretToken:$("token").value,transactionId})});
+    const d=await r.json();
+    $("responseCard").classList.remove("hidden");$("response").textContent=JSON.stringify(d,null,2);
+    const x=d.response||d,data=x.data||x,status=data.status||x.status;
+    $("createStatus").textContent="Status: "+(status||"tidak diketahui");
+    if(status==="success"||status==="paid"||status==="completed") stopPoll();
+  }catch(e){$("createStatus").textContent="Error cek status: "+e.message}
+}
+$("check").onclick=checkStatus;
+$("poll").onclick=()=>{
+  if(pollTimer){stopPoll();return}
+  $("poll").textContent="Stop Auto Cek";
+  checkStatus();pollTimer=setInterval(checkStatus,5000);
+  setTimeout(stopPoll,120000);
+};
+function stopPoll(){if(pollTimer){clearInterval(pollTimer);pollTimer=null}$("poll").textContent="Auto Cek Status (stop 2 menit)"}
+
+$("copyWebhook").onclick=async()=>{await navigator.clipboard.writeText($("webhook").value);$("webhookStatus").textContent="Callback URL disalin."};
+
+$("simulate").onclick=async()=>{
+  const payload={event:"payment.success",transaction_id:transactionId||"TEST-100043729581",status:"success",amount:Number($("amount").value),total_amount:Number($("amount").value)+37,credit_amount:Number($("amount").value)-200,admin_fee:200,qris_method:$("method").value,is_test:true,paid_at:new Date().toISOString()};
+  try{
+    const r=await fetch("/api/payment/webhook",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    const d=await r.json();$("simResponse").classList.remove("hidden");$("simResponse").textContent=JSON.stringify(d,null,2);
+    $("webhookStatus").textContent=r.ok?"Webhook simulator diterima.":"Webhook simulator gagal.";
+  }catch(e){$("webhookStatus").textContent="Error: "+e.message}
+};
+</script>
+</body>
+</html>
